@@ -76,34 +76,38 @@ static char *heap_listp;
  */
 int mm_init(void)
 {
+	//Push up break pointer by four words
 	if((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1)
 		return -1;
-	PUT(heap_listp,0);
-	PUT(heap_listp+(1*WSIZE),PACK(DSIZE,1));
-	PUT(heap_listp+(2*WSIZE),PACK(DSIZE,1));
-	PUT(heap_listp+(3*WSIZE),PACK(0,1));
+	PUT(heap_listp,0);//padding word
+	PUT(heap_listp+(1*WSIZE),PACK(DSIZE,1));//header
+	PUT(heap_listp+(2*WSIZE),PACK(DSIZE,1));//footer
+	PUT(heap_listp+(3*WSIZE),PACK(0,1));//epilogue block
 
-	if (extend_heap(CHUNKSIZE/WSIZE) == NULL)
+	if (extend_heap(CHUNKSIZE/WSIZE) == NULL)//expand the heap
 		return -1;
 	return 0;
 }
 
-static void *extend_heap(size_t words)
+void *extend_heap(size_t words)
 {
 	char *bp;
 	size_t size;
+	//allocate some multiple of DSIZE 
 	size=(words % 2) ? (words+1) * WSIZE : words * WSIZE;
 	if((long)(bp=mem_sbrk(size)) == -1)
 		return NULL;
 
+	//Add free block to heap
 	PUT(HDRP(bp),PACK(size,0));
 	PUT(FTRP(bp),PACK(size,0));
+	//Add epilogue block
 	PUT(HDRP(NEXT_BLKP(bp)),PACK(0,1));
 
 	return coalesce(bp);
 }
 
-static void *coalesce(void *bp)
+void *coalesce(void *bp)
 {
 	size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
 	size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
@@ -142,26 +146,81 @@ static void *coalesce(void *bp)
  */
 void *mm_malloc(size_t size)
 {
-	int newsize = ALIGN(size + SIZE_T_SIZE);
-	void *p = mem_sbrk(newsize);
-	if (p == (void *)-1)
+	size_t asize;//Allocate size
+	size_t extendsize;
+	char *bp;
+
+	if(size==0)
 		return NULL;
-	else {
-		*(size_t *)p = size;
-		return (void *)((char *)p + SIZE_T_SIZE);
+
+	if(size<=DSIZE)
+		asize=2*DSIZE;
+	else
+		//Add overhead and round to nearest multiple of DSIZE
+		asize=DSIZE*((size+(DSIZE)+(DSIZE+1))/DSIZE);
+
+	if((bp=find_fit(asize))!=NULL) {
+		place(bp,asize);
+		return bp;
 	}
+	
+	//Extend the heap if no free block is large enough
+	extendsize=MAX(asize,CHUNKSIZE);
+	if((bp=extend_heap(extendsize/WSIZE))==NULL)
+		return NULL;
+	place(bp,asize);
+	return bp;
 }
 
 /*
- * mm_free - Freeing a block does nothing.
+ * place - Places the requested block at the beginning of the free block,
+ *		splitting only if the size of the remainder would equal or exceed
+ *		the minimum block size
+ */
+void place(void *bp, size_t asize)
+{
+	char *bpsplit=NULL;
+	size_t size=asize;
+	size_t extr_spc;
+	//Minimum block size is 8 for now
+	if((extr_spc = GET_SIZE(HDRP(bp))-asize)>=DSIZE) {
+		bpsplit=((char *)bp + asize);//Next free block pointer
+		PUT(HDRP(bpsplit),PACK(extr_spc,0));
+		PUT(FTRP(bpsplit),PACK(extr_spc,0));
+	}
+	else
+		size=GET_SIZE(HDRP(bp));//Take the whole free block
+	PUT(HDRP(bp),PACK(size,1));
+	PUT(FTRP(bp),PACK(size,1));
+}
+
+/*
+ * mm_free - Freeing a block does something.
  */
 void mm_free(void *ptr)
 {
 	size_t size = GET_SIZE(HDRP(ptr));
-
+	//Basically change alloc bit to 0
 	PUT(HDRP(ptr),PACK(size,0));
 	PUT(FTRP(ptr),PACK(size,0));
 	coalesce(ptr);
+}
+
+/*
+ * find_fit - Performs a first-fit search of the implicit free list
+ */
+void *find_fit(size_t size)
+{
+	char *hdr = heap_listp;	
+	char *bp;
+	while(GET_SIZE(hdr)!=0) {//Run through implicit list until epilogue block
+		bp=hdr+WSIZE;	
+		if(!GET_ALLOC(hdr)&&GET_SIZE(hdr)>=size)
+			return bp;
+		else
+			hdr=HDRP(NEXT_BLKP(bp));
+	}
+	return NULL;
 }
 
 /*
