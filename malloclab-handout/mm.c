@@ -70,23 +70,41 @@ team_t team = {
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 
 static char *heap_listp;
+static char *free_listp;
 
 /* 
  * mm_init - initialize the malloc package.
  */
 int mm_init(void)
 {
-	//Push up break pointer by four words
-	if((heap_listp = mem_sbrk(4*WSIZE)) == (void *)-1)
+	int i;
+	//Push up break pointer by 22 words
+	if((heap_listp = mem_sbrk(22*WSIZE)) == (void *)-1)
 		return -1;
 	PUT(heap_listp,0);//padding word
-	PUT(heap_listp+(1*WSIZE),PACK(DSIZE,1));//header
-	PUT(heap_listp+(2*WSIZE),PACK(DSIZE,1));//footer
-	PUT(heap_listp+(3*WSIZE),PACK(0,1));//epilogue block
+	//Initialize free list
+	free_listp = heap_listp + WSIZE;
+	for(i=0;i<18;i++)
+		PUT(free_listp+(i*WSIZE),0);
+	PUT(heap_listp+(19*WSIZE),PACK(DSIZE,1));//header
+	PUT(heap_listp+(20*WSIZE),PACK(DSIZE,1));//footer
+	PUT(heap_listp+(21*WSIZE),PACK(0,1));//epilogue block
 
 	if (extend_heap(CHUNKSIZE/WSIZE) == NULL)//expand the heap
 		return -1;
 	return 0;
+}
+
+/*
+ * find_box - takes a size and returns which box it belongs to
+ */
+int find_box(size_t size) {
+	//Calculate the greatest power of two that is less than size,
+	//and return the minimum of the power or 17.
+	int box = 0;
+	while((size = size >> 1))
+		box += 1;
+	return ((box > 16) ? 17 : box);
 }
 
 void *extend_heap(size_t words)

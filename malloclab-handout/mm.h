@@ -4,6 +4,7 @@ extern int mm_init (void);
 extern void *mm_malloc (size_t size);
 extern void mm_free (void *ptr);
 extern void *mm_realloc(void *ptr, size_t size);
+int find_box(size_t size);
 void *extend_heap(size_t words);
 void *coalesce(void *bp);
 void *find_fit(size_t size);
