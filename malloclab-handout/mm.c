@@ -78,17 +78,17 @@ static char *free_listp;
 int mm_init(void)
 {
 	int i;
-	//Push up break pointer by 22 words
-	if((heap_listp = mem_sbrk(22*WSIZE)) == (void *)-1)
+	//Push up break pointer by 20 words
+	if((heap_listp = mem_sbrk(20*WSIZE)) == (void *)-1)
 		return -1;
 	PUT(heap_listp,0);//padding word
 	//Initialize free list
 	free_listp = heap_listp + WSIZE;
-	for(i=0;i<18;i++)
+	for(i=0;i<16;i++)
 		PUT(free_listp+(i*WSIZE),0);
-	PUT(heap_listp+(19*WSIZE),PACK(DSIZE,1));//header
-	PUT(heap_listp+(20*WSIZE),PACK(DSIZE,1));//footer
-	PUT(heap_listp+(21*WSIZE),PACK(0,1));//epilogue block
+	PUT(heap_listp+(17*WSIZE),PACK(DSIZE,1));//header
+	PUT(heap_listp+(18*WSIZE),PACK(DSIZE,1));//footer
+	PUT(heap_listp+(19*WSIZE),PACK(0,1));//epilogue block
 
 	if (extend_heap(CHUNKSIZE/WSIZE) == NULL)//expand the heap
 		return -1;
@@ -99,12 +99,18 @@ int mm_init(void)
  * find_box - takes a size and returns which box it belongs to
  */
 int find_box(size_t size) {
-	//Calculate the greatest power of two that is less than size,
-	//and return the minimum of the power or 17.
+	//Round size to next multiple of 8 and find the highest box b where
+	//(2**b*8)+8<=aligned size
+	int asize;
 	int box = 0;
-	while((size = size >> 1))
+	if(size<16)
+		return -1;
+	else if(size==16)
+		return 1;
+	asize=(ALIGN(size)-8)/8;
+	while((asize = asize >> 1))
 		box += 1;
-	return ((box > 16) ? 17 : box);
+	return ((box > 13) ? 14 : box);
 }
 
 void *extend_heap(size_t words)
@@ -158,6 +164,21 @@ void *coalesce(void *bp)
 	return bp;
 }
 
+/*
+ * add_to_free - Adds a block to the free list.
+ */
+void *add_to_free(void *bp)
+{
+	/*
+	size_t size = GET_SIZE(HDRP(bp));
+	int box = find_box(size);
+	char *nextbp;
+	
+	nextbp=GET(free_listp+box*WSIZE);
+	*/
+	return NULL;
+}
+
 /* 
  * mm_malloc - Allocate a block by incrementing the brk pointer.
  *     Always allocate a block whose size is a multiple of the alignment.
@@ -175,7 +196,7 @@ void *mm_malloc(size_t size)
 		asize=2*DSIZE;
 	else
 		//Add overhead and round to nearest multiple of DSIZE
-		asize=DSIZE*((size+(DSIZE)+(DSIZE+1))/DSIZE);
+		asize=DSIZE*((size+(DSIZE)+(DSIZE-1))/DSIZE);
 
 	if((bp=find_fit(asize))!=NULL) {
 		place(bp,asize);

@@ -7,6 +7,7 @@ extern void *mm_realloc(void *ptr, size_t size);
 int find_box(size_t size);
 void *extend_heap(size_t words);
 void *coalesce(void *bp);
+void *add_to_free(void *bp);
 void *find_fit(size_t size);
 void place(void *bp, size_t asize);
 
