@@ -110,7 +110,7 @@ int find_box(size_t size) {
 	asize=(ALIGN(size)-8)/8;
 	while((asize = asize >> 1))
 		box += 1;
-	return ((box > 13) ? 14 : box);
+	return ((box > 14) ? 15 : box);
 }
 
 void *extend_heap(size_t words)
@@ -169,14 +169,14 @@ void *coalesce(void *bp)
  */
 void *add_to_free(void *bp)
 {
-	/*
 	size_t size = GET_SIZE(HDRP(bp));
 	int box = find_box(size);
-	char *nextbp;
+	unsigned int nextbp;
 	
-	nextbp=GET(free_listp+box*WSIZE);
-	*/
-	return NULL;
+	nextbp=GET(free_listp+((box-1)*WSIZE));
+	PUT(bp,nextbp);
+	PUT(free_listp+((box-1)*WSIZE),(*(unsigned int *)bp));
+	return bp;
 }
 
 /* 
@@ -239,10 +239,12 @@ void place(void *bp, size_t asize)
 void mm_free(void *ptr)
 {
 	size_t size = GET_SIZE(HDRP(ptr));
+	void *cptr;
 	//Basically change alloc bit to 0
 	PUT(HDRP(ptr),PACK(size,0));
 	PUT(FTRP(ptr),PACK(size,0));
-	coalesce(ptr);
+	cptr=coalesce(ptr);
+	add_to_free(cptr);
 }
 
 /*
