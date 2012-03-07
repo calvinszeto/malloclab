@@ -1,13 +1,11 @@
 /*
- * mm-naive.c - The fastest, least memory-efficient malloc package.
+ * mm.c
  * 
- * In this naive approach, a block is allocated by simply incrementing
- * the brk pointer.  A block is pure payload. There are no headers or
- * footers.  Blocks are never coalesced or reused. Realloc is
- * implemented directly using mm_malloc and mm_free.
- *
- * NOTE TO STUDENTS: Replace this header comment with your own header
- * comment that gives a high level description of your solution.
+ * Dynamic memory allocator implemented using a segregated free list and
+ * explicit linked lists. The beginning of the heap is reserved for a
+ * segregated free list where each node points to an explicit free list
+ * of blocks with maximum 2 ** (box number + 4). The first box is empty.
+ * Box 15 holds anything larger than 262144 bytes.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -69,7 +67,6 @@ team_t team = {
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 
-static char *heap_listp;
 static char *free_listp;
 
 /* 
@@ -79,22 +76,66 @@ int mm_init(void)
 {
 	int i;
 	//Push up break pointer by 20 words
-	if((heap_listp = mem_sbrk(20*WSIZE)) == (void *)-1)
+	if((free_listp = mem_sbrk(20*WSIZE)) == (void *)-1)
 		return -1;
-	PUT(heap_listp,0);//padding word
+	PUT(free_listp,0);//padding word
 	//Initialize free list
-	free_listp = heap_listp + WSIZE;
+	free_listp += WSIZE;
 	for(i=0;i<16;i++)
 		PUT(free_listp+(i*WSIZE),0);
-	PUT(heap_listp+(17*WSIZE),PACK(DSIZE,1));//header
-	PUT(heap_listp+(18*WSIZE),PACK(DSIZE,1));//footer
-	PUT(heap_listp+(19*WSIZE),PACK(0,1));//epilogue block
+	PUT(free_listp+(16*WSIZE),PACK(DSIZE,1));//header
+	PUT(free_listp+(17*WSIZE),PACK(DSIZE,1));//footer
+	PUT(free_listp+(18*WSIZE),PACK(0,1));//epilogue block
 
 	char *bp;
 	if ((bp=extend_heap(CHUNKSIZE/WSIZE)) == NULL)//expand the heap
 		return -1;
 	add_to_free(bp);
 	return 0;
+}
+
+/* 
+ * mm_malloc - Allocate a block by incrementing the brk pointer.
+ *     Always allocate a block whose size is a multiple of the alignment.
+ */
+void *mm_malloc(size_t size)
+{
+	size_t asize;//Allocate size
+	size_t extendsize;
+	char *bp;
+
+	if(size==0)
+		return NULL;
+
+	if(size<=DSIZE)
+		asize=2*DSIZE;
+	else
+		//Add overhead and round to nearest multiple of DSIZE
+		asize=DSIZE*((size+(DSIZE)+(DSIZE-1))/DSIZE);
+
+	if((bp=find_fit(asize))!=NULL) {
+		place(bp,asize);
+		return bp;
+	}
+	
+	//Extend the heap if no free block is large enough
+	extendsize=MAX(asize,CHUNKSIZE);
+	if((bp=extend_heap(extendsize/WSIZE))==NULL)
+		return NULL;
+	place(bp,asize);
+	return bp;
+}
+
+/*
+ * mm_free - Freeing a block does something.
+ */
+void mm_free(void *ptr)
+{
+	size_t size = GET_SIZE(HDRP(ptr));
+	//Basically change alloc bit to 0
+	PUT(HDRP(ptr),PACK(size,0));
+	PUT(FTRP(ptr),PACK(size,0));
+	add_to_free(coalesce(ptr));
 }
 
 /*
@@ -113,6 +154,37 @@ int find_box(size_t size) {
 	while((asize = asize >> 1))
 		box += 1;
 	return ((box > 14) ? 15 : box);
+}
+
+/*
+ * add_to_free - Adds a block to the free list.
+ */
+void *add_to_free(void *bp)
+{
+	size_t size = GET_SIZE(HDRP(bp));
+	int box = find_box(size);
+	size_t nextbp;
+	
+	nextbp=GET(free_listp+(box*WSIZE));
+	PUT(bp,nextbp);
+	PUT(free_listp+(box*WSIZE),((size_t)bp));
+	return bp;
+}
+
+/*
+ * remove_from_free - Removes a block from the free list.
+ */
+void remove_from_free(void *bp)
+{
+	size_t next = GET(bp);
+	char *pbp = free_listp+(find_box(GET_SIZE(HDRP(bp)))*WSIZE);
+	//Assert that remove_from_free is only called on a pointer
+	//which exists in the free list.
+	while(GET(pbp)!=(size_t)(bp)) {
+		pbp=(void *)GET(pbp);
+		assert(GET(pbp)!=0);
+	}
+	PUT(pbp,next);
 }
 
 void *extend_heap(size_t words)
@@ -171,60 +243,6 @@ void *coalesce(void *bp)
 	return bp;
 }
 
-void remove_from_free(void *bp)
-{
-	size_t next = GET(bp);
-	PUT(free_listp+(find_box(GET_SIZE(HDRP(bp)))*WSIZE),next);
-}
-
-/*
- * add_to_free - Adds a block to the free list.
- */
-void *add_to_free(void *bp)
-{
-	size_t size = GET_SIZE(HDRP(bp));
-	int box = find_box(size);
-	unsigned int nextbp;
-	
-	nextbp=GET(free_listp+(box*WSIZE));
-	PUT(bp,0);//Just in case
-	PUT(bp,nextbp);
-	PUT(free_listp+(box*WSIZE),((size_t)bp));
-	return bp;
-}
-
-/* 
- * mm_malloc - Allocate a block by incrementing the brk pointer.
- *     Always allocate a block whose size is a multiple of the alignment.
- */
-void *mm_malloc(size_t size)
-{
-	size_t asize;//Allocate size
-	size_t extendsize;
-	char *bp;
-
-	if(size==0)
-		return NULL;
-
-	if(size<=DSIZE)
-		asize=2*DSIZE;
-	else
-		//Add overhead and round to nearest multiple of DSIZE
-		asize=DSIZE*((size+(DSIZE)+(DSIZE-1))/DSIZE);
-
-	if((bp=find_fit(asize))!=NULL) {
-		place(bp,asize);
-		return bp;
-	}
-	
-	//Extend the heap if no free block is large enough
-	extendsize=MAX(asize,CHUNKSIZE);
-	if((bp=extend_heap(extendsize/WSIZE))==NULL)
-		return NULL;
-	place(bp,asize);
-	return bp;
-}
-
 /*
  * place - Places the requested block at the beginning of the free block,
  *		splitting only if the size of the remainder would equal or exceed
@@ -236,32 +254,21 @@ void place(void *bp, size_t asize)
 	size_t size=asize;
 	size_t extr_spc;
 	//Minimum block size is 16
-	if((extr_spc = GET_SIZE(HDRP(bp))-asize)>=(2*DSIZE)) {
-		bpsplit=((char *)bp + asize);//Next free block pointer
+	//Note, free block is already removed from free list but alloc bit must be
+	//reset to 1
+	if((extr_spc = GET_SIZE(HDRP(bp))-asize)>=(2*DSIZE)) { 
+		PUT(HDRP(bp),PACK(size,1));
+		PUT(FTRP(bp),PACK(size,1));
+		bpsplit=NEXT_BLKP(bp);//Next free block pointer
 		PUT(HDRP(bpsplit),PACK(extr_spc,0));
 		PUT(FTRP(bpsplit),PACK(extr_spc,0));
 		add_to_free(bpsplit);
 	}
-	else
+	else {
 		size=GET_SIZE(HDRP(bp));//Take the whole free block
-	//Note, free block is already removed from free list but alloc bit must be
-	//reset to 1
-	PUT(HDRP(bp),PACK(size,1));
-	PUT(FTRP(bp),PACK(size,1));
-}
-
-/*
- * mm_free - Freeing a block does something.
- */
-void mm_free(void *ptr)
-{
-	size_t size = GET_SIZE(HDRP(ptr));
-	void *cptr;
-	//Basically change alloc bit to 0
-	PUT(HDRP(ptr),PACK(size,0));
-	PUT(FTRP(ptr),PACK(size,0));
-	cptr=coalesce(ptr);
-	add_to_free(cptr);
+		PUT(HDRP(bp),PACK(size,1));
+		PUT(FTRP(bp),PACK(size,1));
+	}
 }
 
 /*
@@ -292,33 +299,148 @@ void *find_fit(size_t size)
 /*
  * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
  */
-void *mm_realloc(void *ptr, size_t size)
+void *mm_realloc(void *bp, size_t size)
 {
-	void *oldptr = ptr;
-	void *newptr;
-	size_t copySize;
-
-	newptr = mm_malloc(size);
-	if (newptr == NULL)
+	if(bp==NULL)
+		return mm_malloc(size);
+	if(size==0) {
+		mm_free(bp);
 		return NULL;
-	copySize = *(size_t *)((char *)oldptr - SIZE_T_SIZE);
-	if (size < copySize)
-		copySize = size;
-	memcpy(newptr, oldptr, copySize);
-	mm_free(oldptr);
-	return newptr;
+	}
+	
+	
+	char *newbp=NULL;
+	size_t copySize = GET_SIZE(HDRP(bp));
+	//Try to "coalesce" with surrounding blocks before resorting to a
+	//heap extension
+	size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
+	size_t next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
+	size_t asize = copySize;
+	size_t msize = DSIZE*((size+(DSIZE)+(DSIZE-1))/DSIZE);
+	int noSpace=0;
+
+	if(size<copySize) {/*
+		if((copySize-size)>=(2*DSIZE)) {
+			//Split current block
+			place(bp,size);
+			newbp=bp;
+		}
+		else {*/
+			noSpace=1;	
+			copySize=size;
+		//}
+	}
+
+	else if (prev_alloc && next_alloc) {
+		noSpace=1;
+	}
+
+	else if (prev_alloc && !next_alloc) {
+		asize += GET_SIZE(HDRP(NEXT_BLKP(bp)));
+		if(asize>=msize) {
+			remove_from_free(NEXT_BLKP(bp));
+			if((asize-msize)>=2*DSIZE) {
+				PUT(HDRP(bp), PACK(msize,1));
+				PUT(FTRP(bp), PACK(msize,1));
+				char *bpsplit=NEXT_BLKP(bp);
+				PUT(HDRP(bpsplit),PACK(asize-msize,0));
+				PUT(FTRP(bpsplit),PACK(asize-msize,0));
+				add_to_free(bpsplit);
+			}
+			else {
+				PUT(HDRP(bp), PACK(asize,1));
+				PUT(FTRP(bp), PACK(asize,1));
+			}
+			//No need to copy memory
+			newbp=bp;
+		}
+		else
+			noSpace=1;
+	}
+
+	else if (!prev_alloc && next_alloc) {
+		asize += GET_SIZE(HDRP(PREV_BLKP(bp)));
+		if(asize>=msize) {
+			remove_from_free(PREV_BLKP(bp));
+			if((asize-msize)>=2*DSIZE) {
+				newbp=PREV_BLKP(bp);
+				PUT(HDRP(newbp), PACK(msize,1));
+				char *bpsplit=NEXT_BLKP(newbp);
+				//Use memmove in case of overlapping data
+				//Do this before adding any new footers or headers
+				//that could overwrite data.
+				memmove(newbp,bp,copySize);
+				PUT(FTRP(newbp), PACK(msize,1));
+				PUT(HDRP(bpsplit),PACK(asize-msize,0));
+				PUT(FTRP(bpsplit),PACK(asize-msize,0));
+				add_to_free(bpsplit);
+			}
+			else {
+				PUT(FTRP(bp), PACK(asize,1));
+				PUT(HDRP(PREV_BLKP(bp)), PACK(asize,1));
+				newbp=PREV_BLKP(bp);
+				memmove(newbp,bp,copySize);
+			}
+		}
+		else
+			noSpace=1;
+	}
+
+	else {
+		asize += GET_SIZE(HDRP(PREV_BLKP(bp)))+
+			GET_SIZE(HDRP(NEXT_BLKP(bp)));
+		if(asize>=msize) {
+			remove_from_free(NEXT_BLKP(bp));
+			remove_from_free(PREV_BLKP(bp));
+			if((asize-msize)>=2*DSIZE){
+				newbp=PREV_BLKP(bp);
+				PUT(HDRP(newbp), PACK(msize,1));
+				char *bpsplit=NEXT_BLKP(newbp);
+				//Use memmove in case of overlapping data
+				//Do this before adding any new footers or headers
+				//that could overwrite data.
+				memmove(newbp,bp,copySize);
+				PUT(FTRP(newbp), PACK(msize,1));
+				PUT(HDRP(bpsplit),PACK(asize-msize,0));
+				PUT(FTRP(bpsplit),PACK(asize-msize,0));
+				add_to_free(bpsplit);
+			}
+			else {
+				PUT(FTRP(bp), PACK(asize,1));
+				PUT(HDRP(PREV_BLKP(bp)), PACK(asize,1));
+				newbp=PREV_BLKP(bp);
+				memmove(newbp,bp,copySize);
+			}
+		}
+		else
+			noSpace=1;
+	}
+
+	if(noSpace) {
+		newbp=mm_malloc(size);
+		//Copy over memory and free pointer
+		memcpy(newbp,bp,copySize);
+		mm_free(bp);
+	}
+
+	return newbp;
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+int mm_check(void)
+{
+	/*
+	//Is every block in the free list marked as free?
+	int i;
+	for(i=1;i<16;i++) {
+	}
+	//Are there any contiguous free blocks that somehow escaped coalescing?
+	int free;
+	while(no epilogue){
+	}
+	//Is every free block actually in the free list?
+	//Do the pointers in the free list point to valid free blocks?
+	//Do any allocated blocks overlap?
+	//Do the pointers in a heap block point to valid heap addresses?
+	*/
+	return 1;
+}

@@ -6,8 +6,9 @@ GRADER := TBD-FIXME
 LAB_NAME := handin-439-malloclab
 
 #note to self: -g for debugging, -O0 for no optimization
+#	-pg for profiling
 CC = gcc
-CFLAGS = -Wall -O2 -m32 -g
+CFLAGS = -Wall -O2 -m32 -g -pg
 
 OBJS = mdriver.o mm.o memlib.o fsecs.o fcyc.o clock.o ftimer.o
 
