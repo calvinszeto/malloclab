@@ -5,9 +5,9 @@ TURNIN := /lusr/bin/turnin
 GRADER := TBD-FIXME
 LAB_NAME := handin-439-malloclab
 
-#don't forget to take out the added cflags!
+#note to self: -g for debugging, -O0 for no optimization
 CC = gcc
-CFLAGS = -Wall -O2 -m32 -g -O0
+CFLAGS = -Wall -O2 -m32
 
 OBJS = mdriver.o mm.o memlib.o fsecs.o fcyc.o clock.o ftimer.o
 

@@ -167,7 +167,6 @@ void *coalesce(void *bp)
 		PUT(HDRP(PREV_BLKP(bp)), PACK(size,0));
 		PUT(FTRP(NEXT_BLKP(bp)), PACK(size,0));
 		bp=PREV_BLKP(bp);
-		//Remove old free blocks from free list
 	}
 	return bp;
 }
