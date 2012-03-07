@@ -166,8 +166,11 @@ void *add_to_free(void *bp)
 	size_t nextbp;
 	
 	nextbp=GET(free_listp+(box*WSIZE));
-	PUT(bp,nextbp);
-	PUT(free_listp+(box*WSIZE),((size_t)bp));
+	PUT(bp,nextbp);//Next pointer
+	PUT(bp+WSIZE,(size_t)free_listp+(box*WSIZE));//Previous pointer
+	if(nextbp!=0)
+		PUT(nextbp+WSIZE,(size_t)bp);//Next block's previous pointer
+	PUT(free_listp+(box*WSIZE),((size_t)bp));//Box pointer
 	return bp;
 }
 
@@ -177,14 +180,15 @@ void *add_to_free(void *bp)
 void remove_from_free(void *bp)
 {
 	size_t next = GET(bp);
-	char *pbp = free_listp+(find_box(GET_SIZE(HDRP(bp)))*WSIZE);
-	//Assert that remove_from_free is only called on a pointer
-	//which exists in the free list.
+	char *pbp = (char *)GET(bp+WSIZE);
+	/*char *pbp = free_listp+(find_box(GET_SIZE(HDRP(bp)))*WSIZE);
 	while(GET(pbp)!=(size_t)(bp)) {
 		pbp=(void *)GET(pbp);
 		assert(GET(pbp)!=0);
-	}
+	}*/
 	PUT(pbp,next);
+	if(next!=0)
+		PUT(next+WSIZE,(size_t)pbp);
 }
 
 void *extend_heap(size_t words)
@@ -319,16 +323,22 @@ void *mm_realloc(void *bp, size_t size)
 	size_t msize = DSIZE*((size+(DSIZE)+(DSIZE-1))/DSIZE);
 	int noSpace=0;
 
-	if(size<copySize) {/*
-		if((copySize-size)>=(2*DSIZE)) {
+	if(size<copySize) {
+		int temp;
+		if((temp=copySize-msize)>=(2*DSIZE)) {
 			//Split current block
-			place(bp,size);
+			PUT(HDRP(bp),PACK(msize,1));
+			PUT(FTRP(bp),PACK(msize,1));
+			char *bpsplit=NEXT_BLKP(bp);
+			PUT(HDRP(bpsplit),PACK(temp,0));
+			PUT(FTRP(bpsplit),PACK(copySize-msize,0));
+			add_to_free(bpsplit);
 			newbp=bp;
 		}
-		else {*/
+		else {
 			noSpace=1;	
 			copySize=size;
-		//}
+		}
 	}
 
 	else if (prev_alloc && next_alloc) {
