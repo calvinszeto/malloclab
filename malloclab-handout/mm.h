@@ -8,6 +8,7 @@ int find_box(size_t size);
 void *extend_heap(size_t words);
 void *coalesce(void *bp);
 void *add_to_free(void *bp);
+void remove_from_free(void *bp);
 void *find_fit(size_t size);
 void place(void *bp, size_t asize);
 

@@ -90,8 +90,10 @@ int mm_init(void)
 	PUT(heap_listp+(18*WSIZE),PACK(DSIZE,1));//footer
 	PUT(heap_listp+(19*WSIZE),PACK(0,1));//epilogue block
 
-	if (extend_heap(CHUNKSIZE/WSIZE) == NULL)//expand the heap
+	char *bp;
+	if ((bp=extend_heap(CHUNKSIZE/WSIZE)) == NULL)//expand the heap
 		return -1;
+	add_to_free(bp);
 	return 0;
 }
 
@@ -127,8 +129,9 @@ void *extend_heap(size_t words)
 	PUT(FTRP(bp),PACK(size,0));
 	//Add epilogue block
 	PUT(HDRP(NEXT_BLKP(bp)),PACK(0,1));
+	bp=coalesce(bp);
 
-	return coalesce(bp);
+	return bp;
 }
 
 void *coalesce(void *bp)
@@ -142,12 +145,14 @@ void *coalesce(void *bp)
 	}
 
 	else if (prev_alloc && !next_alloc) {
+		remove_from_free(NEXT_BLKP(bp));
 		size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
 		PUT(HDRP(bp), PACK(size,0));
 		PUT(FTRP(bp), PACK(size,0));
 	}
 
 	else if (!prev_alloc && next_alloc) {
+		remove_from_free(PREV_BLKP(bp));
 		size += GET_SIZE(HDRP(PREV_BLKP(bp)));
 		PUT(FTRP(bp), PACK(size,0));
 		PUT(HDRP(PREV_BLKP(bp)), PACK(size,0));
@@ -155,13 +160,22 @@ void *coalesce(void *bp)
 	}
 
 	else {
+		remove_from_free(NEXT_BLKP(bp));
+		remove_from_free(PREV_BLKP(bp));
 		size += GET_SIZE(HDRP(PREV_BLKP(bp)))+
 			GET_SIZE(HDRP(NEXT_BLKP(bp)));
 		PUT(HDRP(PREV_BLKP(bp)), PACK(size,0));
 		PUT(FTRP(NEXT_BLKP(bp)), PACK(size,0));
 		bp=PREV_BLKP(bp);
+		//Remove old free blocks from free list
 	}
 	return bp;
+}
+
+void remove_from_free(void *bp)
+{
+	size_t next = GET(bp);
+	PUT(free_listp+(find_box(GET_SIZE(HDRP(bp)))*WSIZE),next);
 }
 
 /*
@@ -173,9 +187,10 @@ void *add_to_free(void *bp)
 	int box = find_box(size);
 	unsigned int nextbp;
 	
-	nextbp=GET(free_listp+((box-1)*WSIZE));
+	nextbp=GET(free_listp+(box*WSIZE));
+	PUT(bp,0);//Just in case
 	PUT(bp,nextbp);
-	PUT(free_listp+((box-1)*WSIZE),(*(unsigned int *)bp));
+	PUT(free_listp+(box*WSIZE),((size_t)bp));
 	return bp;
 }
 
@@ -221,14 +236,17 @@ void place(void *bp, size_t asize)
 	char *bpsplit=NULL;
 	size_t size=asize;
 	size_t extr_spc;
-	//Minimum block size is 8 for now
-	if((extr_spc = GET_SIZE(HDRP(bp))-asize)>=DSIZE) {
+	//Minimum block size is 16
+	if((extr_spc = GET_SIZE(HDRP(bp))-asize)>=(2*DSIZE)) {
 		bpsplit=((char *)bp + asize);//Next free block pointer
 		PUT(HDRP(bpsplit),PACK(extr_spc,0));
 		PUT(FTRP(bpsplit),PACK(extr_spc,0));
+		add_to_free(bpsplit);
 	}
 	else
 		size=GET_SIZE(HDRP(bp));//Take the whole free block
+	//Note, free block is already removed from free list but alloc bit must be
+	//reset to 1
 	PUT(HDRP(bp),PACK(size,1));
 	PUT(FTRP(bp),PACK(size,1));
 }
@@ -248,18 +266,26 @@ void mm_free(void *ptr)
 }
 
 /*
- * find_fit - Performs a first-fit search of the implicit free list
+ * find_fit - Performs a first-fit search of the corresponding box in the
+ *		segregated free list
  */
 void *find_fit(size_t size)
 {
-	char *hdr = heap_listp;	
 	char *bp;
-	while(GET_SIZE(hdr)!=0) {//Run through implicit list until epilogue block
-		bp=hdr+WSIZE;	
-		if(!GET_ALLOC(hdr)&&GET_SIZE(hdr)>=size)
-			return bp;
-		else
-			hdr=HDRP(NEXT_BLKP(bp));
+	int box = find_box(size);
+	//We search in the smallest matching box first, then move up
+	while(box<=15) {
+		bp=(char *)GET(free_listp+(box*WSIZE));
+		while(bp!=0) {//Run through explicit list until none left
+			if(GET_SIZE(HDRP(bp))>=size) {
+				remove_from_free(bp);
+				return bp;
+			}
+			else {
+				bp=(char *)GET(bp);
+			}
+		}
+		box++;
 	}
 	return NULL;
 }
