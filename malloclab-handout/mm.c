@@ -44,7 +44,7 @@ team_t team = {
 
 #define WSIZE 4 //word size
 #define DSIZE 8 //double word size
-#define CHUNKSIZE (1<<12) //extend the heap 2**10 words at a time
+#define CHUNKSIZE (1<<9) //extend the heap by CHUNKSIZE
 
 #define MAX(x,y) ((x) > (y)? (x) : (y)) //max of x and y
 
@@ -324,14 +324,14 @@ void *mm_realloc(void *bp, size_t size)
 	int noSpace=0;
 
 	if(size<copySize) {
-		int temp;
-		if((temp=copySize-msize)>=(2*DSIZE)) {
+		int extr_spc;
+		if((extr_spc=copySize-msize)>=(2*DSIZE)) {
 			//Split current block
 			PUT(HDRP(bp),PACK(msize,1));
 			PUT(FTRP(bp),PACK(msize,1));
 			char *bpsplit=NEXT_BLKP(bp);
-			PUT(HDRP(bpsplit),PACK(temp,0));
-			PUT(FTRP(bpsplit),PACK(copySize-msize,0));
+			PUT(HDRP(bpsplit),PACK(extr_spc,0));
+			PUT(FTRP(bpsplit),PACK(extr_spc,0));
 			add_to_free(bpsplit);
 			newbp=bp;
 		}
