@@ -6,6 +6,9 @@
  * segregated free list where each node points to an explicit free list
  * of blocks with maximum 2 ** (box number + 4). The first box is empty.
  * Box 15 holds anything larger than 262144 bytes.
+ * Each box links to a doubly linked list of free blocks in the size range;
+ * free blocks have the structure of (header)(next)(prev)...(footer).
+ * Of course, next and prev pointers are not necessary in allocated blocks.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -67,6 +70,7 @@ team_t team = {
 #define NEXT_BLKP(bp) ((char *)(bp) + GET_SIZE(((char *)(bp) - WSIZE)))
 #define PREV_BLKP(bp) ((char *)(bp) - GET_SIZE(((char *)(bp) - DSIZE)))
 
+//Pointer to free list
 static char *free_listp;
 
 /* 
@@ -91,12 +95,14 @@ int mm_init(void)
 	if ((bp=extend_heap(CHUNKSIZE/WSIZE)) == NULL)//expand the heap
 		return -1;
 	add_to_free(bp);
+	//if(mm_check()==0) {assert(0);}
 	return 0;
 }
 
 /* 
- * mm_malloc - Allocate a block by incrementing the brk pointer.
- *     Always allocate a block whose size is a multiple of the alignment.
+ * mm_malloc - Allocate a block by searching the free list,
+ *		otherwise extending the heap.
+ *      Always allocate a block whose size is a multiple of the alignment.
  */
 void *mm_malloc(size_t size)
 {
@@ -113,6 +119,7 @@ void *mm_malloc(size_t size)
 		//Add overhead and round to nearest multiple of DSIZE
 		asize=DSIZE*((size+(DSIZE)+(DSIZE-1))/DSIZE);
 
+	//Search free list
 	if((bp=find_fit(asize))!=NULL) {
 		place(bp,asize);
 		return bp;
@@ -123,11 +130,13 @@ void *mm_malloc(size_t size)
 	if((bp=extend_heap(extendsize/WSIZE))==NULL)
 		return NULL;
 	place(bp,asize);
+	//if(mm_check()==0) {assert(0);}
 	return bp;
 }
 
 /*
- * mm_free - Freeing a block does something.
+ * mm_free - Freeing a block by setting the allocate bit, coalescing,
+ *		then adding to the free list.
  */
 void mm_free(void *ptr)
 {
@@ -136,6 +145,7 @@ void mm_free(void *ptr)
 	PUT(HDRP(ptr),PACK(size,0));
 	PUT(FTRP(ptr),PACK(size,0));
 	add_to_free(coalesce(ptr));
+	//if(mm_check()==0) {assert(0);}
 }
 
 /*
@@ -180,17 +190,16 @@ void *add_to_free(void *bp)
 void remove_from_free(void *bp)
 {
 	size_t next = GET(bp);
-	char *pbp = (char *)GET(bp+WSIZE);
-	/*char *pbp = free_listp+(find_box(GET_SIZE(HDRP(bp)))*WSIZE);
-	while(GET(pbp)!=(size_t)(bp)) {
-		pbp=(void *)GET(pbp);
-		assert(GET(pbp)!=0);
-	}*/
+	char *pbp = (char *)GET(bp+WSIZE); //Previous block pointer
 	PUT(pbp,next);
 	if(next!=0)
 		PUT(next+WSIZE,(size_t)pbp);
 }
 
+/*
+ * extend_heap - extends the heap by a given number of words and
+ *		returns a pointer to the old end of heap.
+ */
 void *extend_heap(size_t words)
 {
 	char *bp;
@@ -210,6 +219,10 @@ void *extend_heap(size_t words)
 	return bp;
 }
 
+/*
+ * coalesce - takes a free block and checks for surrounding free blocks.
+ *		If they exist, coalesce them into one free block.
+ */
 void *coalesce(void *bp)
 {
 	size_t prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
@@ -221,6 +234,7 @@ void *coalesce(void *bp)
 	}
 
 	else if (prev_alloc && !next_alloc) {
+		//Be sure to remove old free blocks from the free list
 		remove_from_free(NEXT_BLKP(bp));
 		size += GET_SIZE(HDRP(NEXT_BLKP(bp)));
 		PUT(HDRP(bp), PACK(size,0));
@@ -301,10 +315,12 @@ void *find_fit(size_t size)
 }
 
 /*
- * mm_realloc - Implemented simply in terms of mm_malloc and mm_free
+ * mm_realloc - returns a pointer to an allocated region of at least
+ *		size bytes while preserving any data in the block given.
  */
 void *mm_realloc(void *bp, size_t size)
 {
+	//Check simple cases
 	if(bp==NULL)
 		return mm_malloc(size);
 	if(size==0) {
@@ -433,24 +449,70 @@ void *mm_realloc(void *bp, size_t size)
 		mm_free(bp);
 	}
 
+	//if(mm_check()==0) {assert(0);}
 	return newbp;
 }
 
+/*
+ * mm_check - Heap consistency checker. Checks that certain properties of
+ *		the heap are correct.
+ */
 int mm_check(void)
 {
-	/*
 	//Is every block in the free list marked as free?
-	int i;
-	for(i=1;i<16;i++) {
-	}
 	//Are there any contiguous free blocks that somehow escaped coalescing?
-	int free;
-	while(no epilogue){
+	int i;
+	char *bp;
+	size_t prev_alloc;	
+	size_t next_alloc;
+	//Iterate through the free list
+	for(i=0;i<16;i++) {
+		bp=(char *)GET(free_listp+i*WSIZE);
+		while(bp!=0) {
+			//Check the allocate bit is free
+			if(GET_ALLOC(HDRP(bp))!=0) {
+				printf("Block in free list not marked as free.\n");
+				return 0;
+			}
+			//Check that surrounding blocks are allocated
+			prev_alloc = GET_ALLOC(FTRP(PREV_BLKP(bp)));
+			next_alloc = GET_ALLOC(HDRP(NEXT_BLKP(bp)));
+			if(!(prev_alloc && next_alloc)) {
+				printf("Uncoalesced free blocks.\n");
+				return 0;
+			}
+			bp=(char *)GET(bp);
+		}
 	}
 	//Is every free block actually in the free list?
-	//Do the pointers in the free list point to valid free blocks?
-	//Do any allocated blocks overlap?
-	//Do the pointers in a heap block point to valid heap addresses?
-	*/
+	bp=free_listp+(17*WSIZE);
+	//Iterate through heap
+	while(GET_SIZE(bp)!=0) {
+		//Check if block is free, and if so, if it is in free list
+		if(!GET_ALLOC(HDRP(bp)) && !in_free_list(bp)) {
+			printf("Free block not in free list.\n");
+			return 0;
+		}
+		bp=NEXT_BLKP(bp);
+	}
 	return 1;
+}
+
+/*
+ * in_free_list - Checks if a given block exists in the free list
+ */
+int in_free_list(void *bp) 
+{
+	int i;
+	char *ibp;
+	for(i=0;i<16;i++) {
+		ibp=(char *)GET(free_listp+i*WSIZE);
+		while(ibp!=0) {
+			//Check if blocks are the same
+			if(ibp==bp)
+				return 1;
+			ibp=(char *)GET(ibp);
+		}
+	}
+	return 0;
 }

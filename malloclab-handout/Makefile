@@ -8,7 +8,7 @@ LAB_NAME := handin-439-malloclab
 #note to self: -g for debugging, -O0 for no optimization
 #	-pg for profiling
 CC = gcc
-CFLAGS = -Wall -O2 -m32 -pg 
+CFLAGS = -Wall -O2 -m32 
 
 OBJS = mdriver.o mm.o memlib.o fsecs.o fcyc.o clock.o ftimer.o
 
