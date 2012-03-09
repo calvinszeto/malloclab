@@ -80,16 +80,16 @@ int mm_init(void)
 {
 	int i;
 	//Push up break pointer by 20 words
-	if((free_listp = mem_sbrk(22*WSIZE)) == (void *)-1)
+	if((free_listp = mem_sbrk(20*WSIZE)) == (void *)-1)
 		return -1;
 	PUT(free_listp,0);//padding word
 	//Initialize free list
 	free_listp += WSIZE;
-	for(i=0;i<18;i++)
+	for(i=0;i<16;i++)
 		PUT(free_listp+(i*WSIZE),0);
-	PUT(free_listp+(18*WSIZE),PACK(DSIZE,1));//header
-	PUT(free_listp+(19*WSIZE),PACK(DSIZE,1));//footer
-	PUT(free_listp+(20*WSIZE),PACK(0,1));//epilogue block
+	PUT(free_listp+(16*WSIZE),PACK(DSIZE,1));//header
+	PUT(free_listp+(17*WSIZE),PACK(DSIZE,1));//footer
+	PUT(free_listp+(18*WSIZE),PACK(0,1));//epilogue block
 
 	char *bp;
 	if ((bp=extend_heap(CHUNKSIZE/WSIZE)) == NULL)//expand the heap
@@ -163,7 +163,7 @@ int find_box(size_t size) {
 	asize=(ALIGN(size)-8)/8;
 	while((asize = asize >> 1))
 		box += 1;
-	return ((box > 16) ? 17 : box);
+	return ((box > 14) ? 15 : box);
 }
 
 /*
@@ -176,6 +176,10 @@ void *add_to_free(void *bp)
 	size_t nextbp;
 	
 	nextbp=GET(free_listp+(box*WSIZE));
+	/*
+	while((nextbp!=0)&&(GET_SIZE(HDRP(nextbp))>size))
+		nextbp=GET(nextbp);
+		*/
 	PUT(bp,nextbp);//Next pointer
 	PUT(bp+WSIZE,(size_t)free_listp+(box*WSIZE));//Previous pointer
 	if(nextbp!=0)
@@ -297,35 +301,23 @@ void *find_fit(size_t size)
 {
 	char *bp;
 	int box = find_box(size);
-	if(box<17) {
-		//We search in the smallest matching box first, then move up
-		/*
-		box++;
+	//We search in the smallest matching box first, then move up
+	while(box<=15) {
 		if ((bp=run_list(box,size))!=NULL)
 			return bp;
-		else {
-			box--;
-			if ((bp=run_list(box,size))!=NULL)
-				return bp;
-			box+=2;
-		}
-		*/
-		while(box<=17) {
-			if ((bp=run_list(box,size))!=NULL)
-				return bp;
-			box++;
-		}
+		box++;
 	}
-	else
-		bp=run_list(box,size);
 	return NULL;
 }
 
+/*
+ * run_list - runs through an explicit free list
+ */
 void *run_list(int box, size_t size)
 {
 	char *bp;
 	bp=(char *)GET(free_listp+(box*WSIZE));
-	while(bp!=0) {//Run through explicit list until none left
+	while(bp!=0) {
 		if(GET_SIZE(HDRP(bp))>=size) {
 			remove_from_free(bp);
 			return bp;
